@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>POLÍGLOTA</title>
+  <style>
+    :root {
+      --primary-color: #007AFF;
+      --background: #F5F5F7;
+      --card-bg: #FFFFFF;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell;
+      background: var(--background);
+      margin: 0;
+      padding: 20px;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    h1 {
+      color: #1d1d1f;
+      margin: 20px 0;
+      font-weight: 600;
+    }
+
+    .container {
+      max-width: 500px;
+      width: 100%;
+      background: var(--card-bg);
+      border-radius: 18px;
+      padding: 30px;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+      margin-top: 20px;
+    }
+
+    select {
+      width: 100%;
+      padding: 12px;
+      border: 1px solid #E0E0E0;
+      border-radius: 10px;
+      margin: 10px 0;
+      font-size: 16px;
+      appearance: none;
+      background: url("data:image/svg+xml;utf8,<svg fill='black' height='24' viewBox='0 0 24 24' width='24' xmlns='http://www.w3.org/2000/svg'><path d='M7 10l5 5 5-5z'/><path d='M0 0h24v24H0z' fill='none'/></svg>") no-repeat right 10px center;
+    }
+
+    .mic-button {
+      width: 60px;
+      height: 60px;
+      border-radius: 50%;
+      background: var(--primary-color);
+      border: none;
+      margin: 20px auto;
+      display: block;
+      cursor: pointer;
+      transition: transform 0.2s;
+      position: relative;
+    }
+
+    .mic-button::after {
+      content: '';
+      position: absolute;
+      top: -8px;
+      left: -8px;
+      right: -8px;
+      bottom: -8px;
+      border: 2px solid var(--primary-color);
+      border-radius: 50%;
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+
+    .mic-button.active::after {
+      opacity: 0.3;
+    }
+
+    .mic-button:active {
+      transform: scale(0.95);
+    }
+
+    footer {
+      margin-top: auto;
+      padding: 20px;
+      color: #666;
+      font-size: 0.9em;
+      text-align: center;
+    }
+
+    .status {
+      text-align: center;
+      color: #666;
+      margin: 15px 0;
+      font-size: 0.9em;
+      min-height: 20px;
+    }
+
+    .loader {
+      border: 3px solid #f3f3f3;
+      border-top: 3px solid var(--primary-color);
+      border-radius: 50%;
+      width: 20px;
+      height: 20px;
+      animation: spin 1s linear infinite;
+      margin: 0 auto;
+      display: none;
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+
+    .error {
+      color: #ff3b30;
+      text-align: center;
+      margin: 10px 0;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <h1>POLÍGLOTA</h1>
+  <div class="container">
+    <select id="inputLang">
+      <option value="es">Español</option>
+      <option value="en">Inglés</option>
+      <option value="fr">Francés</option>
+    </select>
+
+    <select id="outputLang">
+      <option value="en">Inglés</option>
+      <option value="es">Español</option>
+      <option value="de">Alemán</option>
+    </select>
+
+    <button class="mic-button" id="micButton"></button>
+    <div class="loader" id="loader"></div>
+    <div class="status" id="status">Presiona el micrófono para comenzar</div>
+    <div class="error" id="error"></div>
+  </div>
+
+  <footer>Soluciones Digitales. 2025. General Madariaga</footer>
+
+  <script>
+    const synth = window.speechSynthesis;
+    let recognition;
+    let isListening = false;
+    const translationCache = {};
+    const GAS_URL = 'https://script.google.com/macros/s/AKfycbyYiUrdf_-eDDfUp_wTBAnvFav06YjP9WL6DZ-JZqQnVC4cg1qH7bMGQQYbKjckbJOI/exec';
+
+    // Inicializar reconocimiento de voz
+    function initSpeechRecognition() {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SpeechRecognition) {
+        showError('El reconocimiento de voz no es soportado en este navegador');
+        return;
+      }
+
+      recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = document.getElementById('inputLang').value;
+
+      recognition.onresult = async (event) => {
+        const transcript = Array.from(event.results)
+          .map(result => result[0].transcript)
+          .join('');
+
+        if (event.results[0].isFinal) {
+          await handleTranslation(transcript);
+        }
+      };
+
+      recognition.onerror = (event) => {
+        showError(`Error de reconocimiento: ${event.error}`);
+        toggleUIState(false);
+      };
+    }
+
+    // Manejar la traducción
+    async function handleTranslation(text) {
+      try {
+        toggleLoader(true);
+        const targetLang = document.getElementById('outputLang').value;
+        
+        // Verificar caché
+        const cacheKey = `${text}-${targetLang}`;
+        if (translationCache[cacheKey]) {
+          speakText(translationCache[cacheKey], targetLang);
+          return;
+        }
+
+        // Traducir texto
+        const response = await fetch(GAS_URL, {
+          method: 'POST',
+          mode: 'cors',
+          headers: { 
+            'Content-Type': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest'
+          },
+          body: JSON.stringify({ text, targetLang })
+        });
+
+        if (!response.ok) throw new Error('Error en la traducción');
+        
+        const data = await response.json();
+        translationCache[cacheKey] = data.translatedText;
+        speakText(data.translatedText, targetLang);
+
+      } catch (error) {
+        showError(`Error: ${error.message}`);
+      } finally {
+        toggleLoader(false);
+      }
+    }
+
+    // Reproducir texto traducido
+    function speakText(text, lang) {
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = lang;
+      
+      utterance.onstart = () => {
+        document.getElementById('status').textContent = 'Reproduciendo...';
+      };
+      
+      utterance.onend = () => {
+        toggleUIState(false);
+        document.getElementById('status').textContent = 'Listo para escuchar';
+      };
+
+      synth.speak(utterance);
+    }
+
+    // Control de UI
+    function toggleUIState(listening) {
+      isListening = listening;
+      const micButton = document.getElementById('micButton');
+      micButton.classList.toggle('active', listening);
+      document.getElementById('status').textContent = listening 
+        ? 'Escuchando...' 
+        : 'Presiona el micrófono para comenzar';
+    }
+
+    function toggleLoader(show) {
+      document.getElementById('loader').style.display = show ? 'block' : 'none';
+    }
+
+    function showError(message) {
+      document.getElementById('error').textContent = message;
+      document.getElementById('error').style.display = 'block';
+      setTimeout(() => {
+        document.getElementById('error').style.display = 'none';
+      }, 5000);
+    }
+
+    // Event Listeners
+    document.getElementById('micButton').addEventListener('click', () => {
+      if (!isListening) {
+        recognition.start();
+        toggleUIState(true);
+      } else {
+        recognition.stop();
+        toggleUIState(false);
+      }
+    });
+
+    document.getElementById('inputLang').addEventListener('change', () => {
+      recognition.lang = document.getElementById('inputLang').value;
+    });
+
+    // Inicialización
+    document.addEventListener('DOMContentLoaded', () => {
+      initSpeechRecognition();
+    });
+  </script>
+</body>
+</html>
